@@ -1,0 +1,13 @@
+docker run -d --name queue-api-container --network mynetwork -p 3000:3000 --env-file .env queue-api
+
+docker run -d --name queue-worker-container --network mynetwork --env-file .env queue-worker
+
+
+
+
+ docker build -f Dockerfile.api -t queue-api .  
+
+ docker build -f Dockerfile.worker -t queue-worker
+
+
+ 
