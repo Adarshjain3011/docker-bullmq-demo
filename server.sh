@@ -23,6 +23,8 @@ WORKER_PROCESS="${WORKER_PROCESS:-${PROJECT_NAME}-worker}"
 API_CONTAINER="${API_CONTAINER:-${PROJECT_NAME}-api}"
 WORKER_CONTAINER="${WORKER_CONTAINER:-${PROJECT_NAME}-worker}"
 API_PORT="${API_PORT:-3000}"
+NGINX_CONF_SOURCE="${NGINX_CONF_SOURCE:-nginx.conf}"
+NGINX_SITE_NAME="${NGINX_SITE_NAME:-backend}"
 
 # Uses pm3 when available, otherwise falls back to pm2.
 PROCESS_MANAGER="${PROCESS_MANAGER:-auto}"
@@ -40,13 +42,14 @@ fi
 echo "Deploying ${PROJECT_NAME} to ${EC2_USER}@${EC2_HOST}:${APP_DIR}"
 
 ssh "${SSH_ARGS[@]}" "${EC2_USER}@${EC2_HOST}" \
-  "REPO_URL='${REPO_URL}' APP_DIR='${APP_DIR}' BRANCH='${BRANCH}' PROJECT_NAME='${PROJECT_NAME}' API_IMAGE='${API_IMAGE}' WORKER_IMAGE='${WORKER_IMAGE}' API_PROCESS='${API_PROCESS}' WORKER_PROCESS='${WORKER_PROCESS}' API_CONTAINER='${API_CONTAINER}' WORKER_CONTAINER='${WORKER_CONTAINER}' API_PORT='${API_PORT}' PROCESS_MANAGER='${PROCESS_MANAGER}' bash -s" <<'REMOTE_SCRIPT'
+  "REPO_URL='${REPO_URL}' APP_DIR='${APP_DIR}' BRANCH='${BRANCH}' PROJECT_NAME='${PROJECT_NAME}' API_IMAGE='${API_IMAGE}' WORKER_IMAGE='${WORKER_IMAGE}' API_PROCESS='${API_PROCESS}' WORKER_PROCESS='${WORKER_PROCESS}' API_CONTAINER='${API_CONTAINER}' WORKER_CONTAINER='${WORKER_CONTAINER}' API_PORT='${API_PORT}' NGINX_CONF_SOURCE='${NGINX_CONF_SOURCE}' NGINX_SITE_NAME='${NGINX_SITE_NAME}' PROCESS_MANAGER='${PROCESS_MANAGER}' bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 echo "Checking required commands..."
 missing_commands=()
 command -v git >/dev/null || missing_commands+=("git")
 command -v docker >/dev/null || missing_commands+=("docker")
+command -v nginx >/dev/null || missing_commands+=("nginx")
 
 if [[ "${PROCESS_MANAGER}" == "auto" ]]; then
   if command -v pm3 >/dev/null; then
@@ -84,6 +87,16 @@ git pull --ff-only origin "${BRANCH}"
 echo "Building Docker images..."
 docker build -f Dockerfile.api -t "${API_IMAGE}" .
 docker build -f Dockerfile.worker -t "${WORKER_IMAGE}" .
+
+if [[ -f "${NGINX_CONF_SOURCE}" ]]; then
+  echo "Updating Nginx config..."
+  sudo cp "${NGINX_CONF_SOURCE}" "/etc/nginx/sites-available/${NGINX_SITE_NAME}"
+  sudo ln -sfn "/etc/nginx/sites-available/${NGINX_SITE_NAME}" "/etc/nginx/sites-enabled/${NGINX_SITE_NAME}"
+  sudo nginx -t
+  sudo systemctl reload nginx
+else
+  echo "Nginx config ${NGINX_CONF_SOURCE} not found in ${APP_DIR}; skipping Nginx update."
+fi
 
 ENV_ARGS=()
 if [[ -f .env ]]; then
