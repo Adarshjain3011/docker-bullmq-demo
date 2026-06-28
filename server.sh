@@ -23,6 +23,11 @@ WORKER_PROCESS="${WORKER_PROCESS:-${PROJECT_NAME}-worker}"
 API_CONTAINER="${API_CONTAINER:-${PROJECT_NAME}-api}"
 WORKER_CONTAINER="${WORKER_CONTAINER:-${PROJECT_NAME}-worker}"
 API_PORT="${API_PORT:-3000}"
+DOCKER_NETWORK="${DOCKER_NETWORK:-${PROJECT_NAME}-network}"
+REDIS_IMAGE="${REDIS_IMAGE:-redis:7-alpine}"
+REDIS_CONTAINER="${REDIS_CONTAINER:-redis}"
+REDIS_HOST="${REDIS_HOST:-redis}"
+REDIS_PORT="${REDIS_PORT:-6379}"
 NGINX_CONF_SOURCE="${NGINX_CONF_SOURCE:-nginx.conf}"
 NGINX_SITE_NAME="${NGINX_SITE_NAME:-backend}"
 
@@ -42,7 +47,7 @@ fi
 echo "Deploying ${PROJECT_NAME} to ${EC2_USER}@${EC2_HOST}:${APP_DIR}"
 
 ssh "${SSH_ARGS[@]}" "${EC2_USER}@${EC2_HOST}" \
-  "REPO_URL='${REPO_URL}' APP_DIR='${APP_DIR}' BRANCH='${BRANCH}' PROJECT_NAME='${PROJECT_NAME}' API_IMAGE='${API_IMAGE}' WORKER_IMAGE='${WORKER_IMAGE}' API_PROCESS='${API_PROCESS}' WORKER_PROCESS='${WORKER_PROCESS}' API_CONTAINER='${API_CONTAINER}' WORKER_CONTAINER='${WORKER_CONTAINER}' API_PORT='${API_PORT}' NGINX_CONF_SOURCE='${NGINX_CONF_SOURCE}' NGINX_SITE_NAME='${NGINX_SITE_NAME}' PROCESS_MANAGER='${PROCESS_MANAGER}' bash -s" <<'REMOTE_SCRIPT'
+  "REPO_URL='${REPO_URL}' APP_DIR='${APP_DIR}' BRANCH='${BRANCH}' PROJECT_NAME='${PROJECT_NAME}' API_IMAGE='${API_IMAGE}' WORKER_IMAGE='${WORKER_IMAGE}' API_PROCESS='${API_PROCESS}' WORKER_PROCESS='${WORKER_PROCESS}' API_CONTAINER='${API_CONTAINER}' WORKER_CONTAINER='${WORKER_CONTAINER}' API_PORT='${API_PORT}' DOCKER_NETWORK='${DOCKER_NETWORK}' REDIS_IMAGE='${REDIS_IMAGE}' REDIS_CONTAINER='${REDIS_CONTAINER}' REDIS_HOST='${REDIS_HOST}' REDIS_PORT='${REDIS_PORT}' NGINX_CONF_SOURCE='${NGINX_CONF_SOURCE}' NGINX_SITE_NAME='${NGINX_SITE_NAME}' PROCESS_MANAGER='${PROCESS_MANAGER}' bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 echo "Checking required commands..."
@@ -102,6 +107,23 @@ ENV_ARGS=()
 if [[ -f .env ]]; then
   ENV_ARGS=(--env-file "$(pwd)/.env")
 fi
+ENV_ARGS+=(-e "REDIS_HOST=${REDIS_HOST}" -e "REDIS_PORT=${REDIS_PORT}")
+
+echo "Preparing Docker network and Redis..."
+docker network create "${DOCKER_NETWORK}" >/dev/null 2>&1 || true
+
+if docker ps -a --format '{{.Names}}' | grep -Fxq "${REDIS_CONTAINER}"; then
+  docker start "${REDIS_CONTAINER}" >/dev/null
+else
+  docker run -d \
+    --name "${REDIS_CONTAINER}" \
+    --network "${DOCKER_NETWORK}" \
+    --restart unless-stopped \
+    -p "${REDIS_PORT}:6379" \
+    "${REDIS_IMAGE}" >/dev/null
+fi
+
+docker network connect "${DOCKER_NETWORK}" "${REDIS_CONTAINER}" >/dev/null 2>&1 || true
 
 echo "Stopping old PM processes and containers..."
 "${PROCESS_MANAGER}" delete "${API_PROCESS}" >/dev/null 2>&1 || true
@@ -113,6 +135,7 @@ echo "Starting containers with ${PROCESS_MANAGER}..."
 "${PROCESS_MANAGER}" start docker --name "${API_PROCESS}" -- \
   run --rm \
   --name "${API_CONTAINER}" \
+  --network "${DOCKER_NETWORK}" \
   -p "${API_PORT}:3000" \
   "${ENV_ARGS[@]}" \
   "${API_IMAGE}" \
@@ -121,6 +144,7 @@ echo "Starting containers with ${PROCESS_MANAGER}..."
 "${PROCESS_MANAGER}" start docker --name "${WORKER_PROCESS}" -- \
   run --rm \
   --name "${WORKER_CONTAINER}" \
+  --network "${DOCKER_NETWORK}" \
   "${ENV_ARGS[@]}" \
   "${WORKER_IMAGE}"
 
