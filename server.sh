@@ -12,7 +12,7 @@ SSH_KEY_PATH="${SSH_KEY_PATH:-C:/Users/hp/Downloads/docker-key.pem}"
 SSH_PORT="${SSH_PORT:-22}"
 
 REPO_URL="${REPO_URL:-https://github.com/Adarshjain3011/docker-bullmq-demo.git}"
-APP_DIR="${APP_DIR:-/home/${EC2_USER}/docker-bullmq-demo}"
+APP_DIR="${APP_DIR:-/var/www/backend}"
 BRANCH="${BRANCH:-main}"
 
 PROJECT_NAME="${PROJECT_NAME:-docker-bullmq-demo}"
@@ -24,9 +24,8 @@ API_CONTAINER="${API_CONTAINER:-${PROJECT_NAME}-api}"
 WORKER_CONTAINER="${WORKER_CONTAINER:-${PROJECT_NAME}-worker}"
 API_PORT="${API_PORT:-3000}"
 
-# The user requested pm3. If your server uses pm2 instead, run:
-#   PROCESS_MANAGER=pm2 ./server.sh
-PROCESS_MANAGER="${PROCESS_MANAGER:-pm3}"
+# Uses pm3 when available, otherwise falls back to pm2.
+PROCESS_MANAGER="${PROCESS_MANAGER:-auto}"
 
 if [[ -z "${EC2_HOST}" ]]; then
   echo "Missing EC2_HOST. Example: EC2_HOST=ec2-1-2-3-4.compute.amazonaws.com ./server.sh"
@@ -45,9 +44,30 @@ ssh "${SSH_ARGS[@]}" "${EC2_USER}@${EC2_HOST}" \
 set -euo pipefail
 
 echo "Checking required commands..."
-command -v git >/dev/null
-command -v docker >/dev/null
-command -v "${PROCESS_MANAGER}" >/dev/null
+missing_commands=()
+command -v git >/dev/null || missing_commands+=("git")
+command -v docker >/dev/null || missing_commands+=("docker")
+
+if [[ "${PROCESS_MANAGER}" == "auto" ]]; then
+  if command -v pm3 >/dev/null; then
+    PROCESS_MANAGER="pm3"
+  elif command -v pm2 >/dev/null; then
+    PROCESS_MANAGER="pm2"
+  else
+    missing_commands+=("pm3 or pm2")
+  fi
+elif ! command -v "${PROCESS_MANAGER}" >/dev/null; then
+  missing_commands+=("${PROCESS_MANAGER}")
+fi
+
+if (( ${#missing_commands[@]} > 0 )); then
+  echo "Missing required command(s): ${missing_commands[*]}"
+  echo "Install the missing command(s) on the EC2 instance, then run this script again."
+  echo "For pm2, you can usually run: sudo npm install -g pm2"
+  exit 1
+fi
+
+echo "Using process manager: ${PROCESS_MANAGER}"
 
 if [[ ! -d "${APP_DIR}/.git" ]]; then
   echo "Repository not found at ${APP_DIR}. Cloning..."
